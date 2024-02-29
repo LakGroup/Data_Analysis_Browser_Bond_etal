@@ -1,0 +1,40 @@
+#-----------bin file header-----------%
+1	x (pix)
+2	y (pix)
+3	x_c (pix)
+4	y_c (pix)
+5	height
+6	area
+7	width
+8	phi
+9	aspect
+10	background
+11	intensity
+12	channel
+13	fitIterations
+14	frame	
+15	trackLength
+16	link
+17	z
+18	zc
+
+#-----------csv file header------------#
+1	channel
+2	frame
+3	x (nm)
+4	y (nm)
+5	z (nm)
+6	x_precision (nm)
+7	y_precision (nm)
+8	X(pix)
+9	Y(pix)
+10	Z(pix)
+11	X precesion (pix)
+12	Y precision (pix)
+13	X raw (pix)
+14	Y raw (pix)
+15	Z raw (pix)
+16	Photons
+17	Background
+18	PSF Sigma X (pix)
+19	PSF Sigma Y (pix)

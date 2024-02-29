@@ -1,0 +1,251 @@
+%% Section 1: Initialization.
+% Clean up the workspace.
+clear;close all;clc
+
+% -------------------------------------------------------------------------
+% Declare the input variables.
+PixelSize = 117; % Pixel size of 117 nm per pixel (single number).
+ReferenceChannel = 0; % Set the reference channel (usually 0 - 1 - 2 - 3).
+RemoveChannels = [1 2]; % If there need to be any channels removed, set the channel number. Otherwise, leave as an empty array (RemoveChannels = [];).
+FrameChange = 100; % Set the number of frames for which each channel recording changes (e.g.: 100 means: 1-100 Channel 1 - 101:200 Channel 2 - 201:300 Channel 1 - etc.).
+VoronoiValues = [0.013 1500]; % Values used for Voronoi clustering. First value = Voronoi Area Threshold; Second value = Minimum Number of Points.
+AreaFilter = 3.5; % If any additional area filtering has to be done, this can be specified (in pixels²). If not, this value should be 0.
+StepSize = 500; % The stepsize for how frequently the efficiency has to be calculated.
+ChannelNames = {'LAMP1','TMEM192'}; % set the channel names.
+Outliers = []; % Set the percentiles of outliers. Leave empty if not needed.
+% -------------------------------------------------------------------------
+
+% Check for errors.
+if numel(PixelSize) ~= 1 || PixelSize <= 0
+    error('Your declared pixel size was invalid. Please change this value in the script.');
+end
+if numel(ReferenceChannel) ~= 1 || ReferenceChannel < 0
+    error('Your declared reference channel was invalid. Please change this value in the script.');
+end
+if any(ismember(RemoveChannels,ReferenceChannel))
+    error('Your declared channel(s) to be removed is/are invalid. Please change this value in the script.');
+end
+if numel(VoronoiValues) ~= 2 || any(VoronoiValues<=0)
+    error('Your declared VoronoiValues are invalid. Please change these values in the script.');
+end
+if numel(AreaFilter) ~= 1 || AreaFilter < 0
+    error('Your declared AreaFilter is invalid. Please change this value in the script.');
+end
+if (~isempty(Outliers) && numel(Outliers) ~= 2) || (~isempty(Outliers) && (any(Outliers < 0) || any(Outliers > 100))) 
+    error('Your declared Outliers is invalid. Please change this value in the script.');
+end
+
+%% Section 2: Data loading and cleanup.
+% Load the data.
+[file,path] = uigetfile({'*.csv'},'Select .csv file'); % Select 1 Excel file.
+
+if isequal(file,0)
+    error('You pressed cancel or did not select any file.'); % Throw an error if nothing was selected or cancel was pressed.
+else
+    name = fullfile(path,file); % Make the full filename so it can be loaded easier.
+end
+
+saveData = [file(1:end-4) '.mat'];
+
+% Read the Excel file as a table.
+wb = waitbar(0,'Loading and extracting the data...                  ');
+table = readtable(name);
+
+% Seperate the channels from one another.
+Channel = unique(table.Channel);
+
+DataPerChannel = cell(numel(Channel),1);
+for i = 1:length(Channel)
+    Idx = table.Channel == Channel(i);
+    DataPerChannel{i} = [table.Frame(Idx)+1 table.X_nm_(Idx)/PixelSize table.Y_nm_(Idx)/PixelSize];
+end
+clear i Idx table PixelSize
+
+% Remove channels in case there are entries from unwanted channels.
+if ~isempty(RemoveChannels)
+    Idx = find(ismember(Channel,RemoveChannels));
+    DataPerChannel(Idx) = [];
+    Channel(Idx) = [];
+end
+clear Idx RemoveChannels
+
+% Update the waitbar
+waitbar(0.5,wb,'Loading and extracting the data...');
+
+% Correct the frame numbers for each channel.
+maxFrame = max(cellfun(@(x) max(x(:,1)),DataPerChannel));
+for i = 1:ceil(maxFrame/FrameChange)/2
+    limit1 = [(i*2-2)*FrameChange+1 (i*2-1)*FrameChange];
+    limit2 = [(i*2-1)*FrameChange+1 (i*2)*FrameChange];
+
+    DataPerChannel{1}(DataPerChannel{1}(:,1)>=limit1(1) & DataPerChannel{1}(:,1)<=limit1(2),1) = DataPerChannel{1}(DataPerChannel{1}(:,1)>=limit1(1) & DataPerChannel{1}(:,1)<=limit1(2),1) - (i-1)*FrameChange;
+    DataPerChannel{2}(DataPerChannel{2}(:,1)>=limit2(1) & DataPerChannel{2}(:,1)<=limit2(2),1) = DataPerChannel{2}(DataPerChannel{2}(:,1)>=limit2(1) & DataPerChannel{2}(:,1)<=limit2(2),1) - i*FrameChange;
+end
+clear i maxFrame limit1 limit2
+
+% Update the maximum framenumber
+maxFrame = max(cellfun(@(x) max(x(:,1)),DataPerChannel));
+
+% Determine the position of the reference channel and the coloc channels.
+RefChannel = DataPerChannel{Channel == ReferenceChannel};
+ColocChannels = DataPerChannel(Channel ~= ReferenceChannel);
+clear DataPerChannel ReferenceChannel Channel
+
+% Update the waitbar.
+waitbar(1,wb,'Loading and extracting the data... Done');
+pause(0.5)
+
+%% Section 3: Clustering
+% Make clusters from the reference channel.
+waitbar(0,wb,'Clustering the data in the reference channel...');
+
+vor = Construct_voronoi_structure(RefChannel);
+waitbar(0.5,wb,'Clustering the data in the reference channel...');
+RefClusters = Get_voronoi_cluster(vor,VoronoiValues);
+clear RefChannel VoronoiValues vor
+
+% Update the waitbar.
+waitbar(1,wb,'Clustering the data in the reference channel... Done');
+pause(0.5)
+
+% Do additional filtering if needed.
+if AreaFilter ~= 0
+
+    % Update the waitbar if needed.
+    waitbar(0,wb,'Performing an area filter on the reference clusters...');
+
+    % Calculate the areas of each cluster.
+    Area = zeros(numel(RefClusters),1);
+    for i = 1:numel(RefClusters)
+        waitbar(i/numel(RefClusters),wb,'Performing an area filter on the reference clusters...');
+        Area(i) = Calc_Area(RefClusters{i}(:,2:3));
+    end
+
+    % Do the filtering.
+    RefClusters = RefClusters(Area > AreaFilter);
+
+    % Update the waitbar.
+    waitbar(1,wb,'Performing an area filter on the reference clusters... Done');
+    pause(0.5)
+
+end
+clear AreaFilter i Area
+
+%% Section 4: Data extraction for coloc channels
+% Update the waitbar
+waitbar(0,wb,'Extracting all the data in the coloc channel(s)...');
+
+% Extract the data in the other channels that is within the reference
+% clusters.
+Data_Coloc = cell(numel(ColocChannels),1);
+for i = 1:numel(ColocChannels)
+    waitbar(i/numel(ColocChannels),wb,'Extracting all the data in the coloc channel(s)...');
+    Data_Coloc{i} = Extract_Locs_Coloc(RefClusters,ColocChannels{i});
+end
+clear i ColocChannels
+
+% Update the waitbar
+waitbar(1,wb,'Extracting all the data in the coloc channel(s)... Done');
+pause(0.5)
+
+%% Section 5: Calculating area evolution
+% Update the waitbar
+waitbar(0,wb,'Calculating the area evolution for the reference clusters...');
+
+% Calculate the area evolution for each reference cluster, keeping into 
+% account the frames.
+AreaEvolveRef = zeros(numel(RefClusters),ceil(maxFrame/StepSize));
+for i = 1:numel(RefClusters)
+    waitbar(i/numel(RefClusters),wb,'Calculating the area evolution for the reference clusters...');
+    AreaEvolveRef(i,:) = AreaEvolution(RefClusters{i},StepSize,maxFrame);
+end
+
+% Update the waitbar
+waitbar(0,wb,'Calculating the area evolution for the colocalization clusters...          ');
+
+% Calculate the area evolution for each colocalization cluster, keeping 
+% into account the frames.
+AreaEvolveColoc = cell(numel(Data_Coloc),1);
+for i = 1:numel(Data_Coloc)
+    AreaEvolveColoc{i} = zeros(numel(Data_Coloc{i}),ceil(maxFrame/StepSize));
+    for j = 1:numel(Data_Coloc{i})
+        waitbar(j/numel(Data_Coloc{i}),wb,['Calculating the area evolution for the colocalization clusters... Channel ' num2str(i) '/' num2str(numel(Data_Coloc))]);
+        AreaEvolveColoc{i}(j,:) = AreaEvolution(Data_Coloc{i}{j},StepSize,maxFrame);
+    end
+    AreaEvolveColoc{i} = AreaEvolveColoc{i}./repmat(AreaEvolveRef(:,ceil(maxFrame/StepSize)),[1 ceil(maxFrame/StepSize)])*100;
+end
+clear i j
+
+% Normalize the area of the reference clusters. We do it after the coloc
+% area to not mess up that calculation.
+AreaEvolveRef = AreaEvolveRef./repmat(AreaEvolveRef(:,ceil(maxFrame/StepSize)),[1 ceil(maxFrame/StepSize)])*100;
+
+% Update the waitbar
+waitbar(1,wb,'Calculating the area evolution for the colocalization clusters... Done');
+pause(0.5)
+close(wb)
+
+%% Section 5: Plot the graphs
+% Plot the results
+x_axis = StepSize:StepSize:maxFrame;
+shaded_x = [x_axis fliplr(x_axis)];
+
+% Remove outliers if needed
+if ~isempty(Outliers)
+    Ref = rmoutliers(AreaEvolveRef,'percentiles',[Outliers(1) Outliers(2)]);
+    Coloc = cellfun(@(x) rmoutliers(x,'percentiles',[Outliers(1) Outliers(2)]),AreaEvolveColoc,'UniformOutput',false);
+else
+    Ref = AreaEvolveRef;
+    Coloc = AreaEvolveColoc;
+end
+
+figure('Units','normalized','OuterPosition',[0.02 0.02 0.98 0.98])
+if 1 + numel(Coloc) == 2
+    inBetween = [mean(Ref) + std(Ref), fliplr(mean(Ref) - std(Ref))];
+    subplot(1,2,1);fill(shaded_x,inBetween,'g','facealpha',0.5,'edgecolor','none');hold on;
+    plot(x_axis,Ref');xlabel('Frame [-]','FontSize',12,'FontWeight','bold');ylabel('Area [%]','FontSize',12,'FontWeight','bold');set(gca,'FontSize',12,'FontWeight','bold');title(ChannelNames{1},'FontSize',12,'FontWeight','bold');axis([0 maxFrame 0 max(AreaEvolveRef(:))*1.05])
+    plot(x_axis,mean(Ref)','k','LineWidth',2);
+
+    inBetween = [mean(Coloc{1}) + std(Coloc{1}), fliplr(mean(Coloc{1}) - std(Coloc{1}))];
+    subplot(1,2,2);fill(shaded_x,inBetween,'g','facealpha',0.5,'edgecolor','none');hold on;
+    plot(x_axis,Coloc{1}');xlabel('Frame [-]','FontSize',12,'FontWeight','bold');ylabel('Area [%]','FontSize',12,'FontWeight','bold');set(gca,'FontSize',12,'FontWeight','bold');title(ChannelNames{2},'FontSize',12,'FontWeight','bold');axis([0 maxFrame 0 max(AreaEvolveColoc{1}(:))*1.05])
+    plot(x_axis,mean(Coloc{1})','k','LineWidth',2);
+elseif 1 + numel(Coloc) == 3
+    inBetween = [mean(Ref) + std(Ref), fliplr(mean(Ref) - std(Ref))];
+    subplot(1,3,1);fill(shaded_x,inBetween,'g','facealpha',0.5,'edgecolor','none');hold on;
+    plot(x_axis,Ref');xlabel('Frame [-]','FontSize',12,'FontWeight','bold');ylabel('Area [%]','FontSize',12,'FontWeight','bold');set(gca,'FontSize',12,'FontWeight','bold');title(ChannelNames{1},'FontSize',12,'FontWeight','bold');axis([0 maxFrame 0 max(AreaEvolveRef(:))*1.05])
+    plot(x_axis,mean(Ref)','k','LineWidth',2);
+
+    inBetween = [mean(Coloc{1}) + std(Coloc{1}), fliplr(mean(Coloc{1}) - std(Coloc{1}))];
+    subplot(1,3,2);fill(shaded_x,inBetween,'g','facealpha',0.5,'edgecolor','none');hold on;
+    plot(x_axis,Coloc{1}');xlabel('Frame [-]','FontSize',12,'FontWeight','bold');ylabel('Area [%]','FontSize',12,'FontWeight','bold');set(gca,'FontSize',12,'FontWeight','bold');title(ChannelNames{2},'FontSize',12,'FontWeight','bold');axis([0 maxFrame 0 max(AreaEvolveColoc{1}(:))*1.05])
+    plot(x_axis,mean(Coloc{1})','k','LineWidth',2);
+
+    inBetween = [mean(Coloc{2}) + std(Coloc{2}), fliplr(mean(Coloc{2}) - std(Coloc{2}))];
+    subplot(1,3,3);fill(shaded_x,inBetween,'g','facealpha',0.2,'edgecolor','none');hold on;
+    plot(x_axis,Coloc{2}');xlabel('Frame [-]','FontSize',12,'FontWeight','bold');ylabel('Area [%]','FontSize',12,'FontWeight','bold');set(gca,'FontSize',12,'FontWeight','bold');title(ChannelNames{3},'FontSize',12,'FontWeight','bold');axis([0 maxFrame 0 max(AreaEvolveColoc{2}(:))*1.05])
+    plot(x_axis,mean(Coloc{2})','k','LineWidth',2);
+elseif 1 + numel(Coloc) == 4
+    inBetween = [mean(Ref) + std(Ref), fliplr(mean(Ref) - std(Ref))];
+    subplot(2,2,1);fill(shaded_x,inBetween,'g','facealpha',0.5,'edgecolor','none');hold on;
+    plot(x_axis,Ref');xlabel('Frame [-]','FontSize',12,'FontWeight','bold');ylabel('Area [%]','FontSize',12,'FontWeight','bold');set(gca,'FontSize',12,'FontWeight','bold');title(ChannelNames{1},'FontSize',12,'FontWeight','bold');axis([0 maxFrame 0 max(AreaEvolveRef(:))*1.05])
+    plot(x_axis,mean(Ref)','k','LineWidth',2);
+
+    inBetween = [mean(Coloc{1}) + std(Coloc{1}), fliplr(mean(Coloc{1}) - std(Coloc{1}))];
+    subplot(2,2,2);fill(shaded_x,inBetween,'g','facealpha',0.5,'edgecolor','none');hold on;
+    plot(x_axis,Coloc{1}');xlabel('Frame [-]','FontSize',12,'FontWeight','bold');ylabel('Area [%]','FontSize',12,'FontWeight','bold');set(gca,'FontSize',12,'FontWeight','bold');title(ChannelNames{2},'FontSize',12,'FontWeight','bold');axis([0 maxFrame 0 max(AreaEvolveColoc{1}(:))*1.05])
+    plot(x_axis,mean(Coloc{1})','k','LineWidth',2);
+
+    inBetween = [mean(Coloc{2}) + std(Coloc{2}), fliplr(mean(Coloc{2}) - std(Coloc{2}))];
+    subplot(2,2,3);fill(shaded_x,inBetween,'g','facealpha',0.2,'edgecolor','none');hold on;
+    plot(x_axis,Coloc{2}');xlabel('Frame [-]','FontSize',12,'FontWeight','bold');ylabel('Area [%]','FontSize',12,'FontWeight','bold');set(gca,'FontSize',12,'FontWeight','bold');title(ChannelNames{3},'FontSize',12,'FontWeight','bold');axis([0 maxFrame 0 max(AreaEvolveColoc{2}(:))*1.05])
+    plot(x_axis,mean(Coloc{2})','k','LineWidth',2);
+
+    inBetween = [mean(Coloc{3}) + std(Coloc{3}), fliplr(mean(Coloc{3}) - std(Coloc{3}))];
+    subplot(2,2,4);fill(shaded_x,inBetween,'g','facealpha',0.2,'edgecolor','none');hold on;
+    plot(x_axis,Coloc{3}');xlabel('Frame [-]','FontSize',12,'FontWeight','bold');ylabel('Area [%]','FontSize',12,'FontWeight','bold');set(gca,'FontSize',12,'FontWeight','bold');title(ChannelNames{4},'FontSize',12,'FontWeight','bold');axis([0 maxFrame 0 max(AreaEvolveColoc{3}(:))*1.05])
+    plot(x_axis,mean(Coloc{3})','k','LineWidth',2);
+end
+print([name(1:end-4) '.png'],'-dpng','-r300')
+
+save(fullfile(path,saveData),'Ref','Coloc');
