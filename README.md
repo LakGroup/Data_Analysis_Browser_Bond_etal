@@ -35,6 +35,10 @@ To Run:
   Select the colocalization data in the Data Browser -> click 'Set Other Channel' in the Lysosome Mask Module (or Lysosome Mask LAMTOR Module)
   Select 'Start Extraction'
   ```
+  The output will be:
+  - An Excel file with the entire summary of the output.
+  - The seperated data saved in the data browser
+
   - Perform the Pattern Analysis
   ```
   Select Modules
@@ -43,13 +47,9 @@ To Run:
   Select the colocalization data in the Data Browser -> click 'Set Other Channel' in the Pattern Analysis Module
   Select 'Start Extraction'
   ```
-Note: make sure to install python for MATLAB when running the Pattern Analysis.
+  Note: make sure to install python for MATLAB when running the Pattern Analysis.
 
- A typical "installation" should not take you longer than a minute, and the run time on a i7-12700H 2.30 GHz (32 GB RAM) laptop with Windows 64-bit is ~2 minutes.
- 
- The output will be:
-  - An Excel file with the entire summary of the output.
-  - The seperated data saved in the data browser
-  
+ A typical "installation" should not take you longer than a minute, and the run time on a i7-12700H 2.30 GHz (32 GB RAM) laptop with Windows 64-bit is ~1 minute.
+   
 ## Other
 For more information, please refer to: xxx (to be updated)
