@@ -36,8 +36,10 @@ To Run:
   Select 'Start Extraction'
   ```
   The output will be:
-  - An Excel file with the entire summary of the output.
-  - The seperated data saved in the data browser
+  ```
+  An Excel file with the entire summary of the output.
+  The seperated data saved in the data browser
+  ```
 
   - Perform the Pattern Analysis
   ```
@@ -46,6 +48,11 @@ To Run:
   Select the reference data in the Data Browser -> click 'Set Reference Data' in the Pattern Analysis Module
   Select the colocalization data in the Data Browser -> click 'Set Other Channel' in the Pattern Analysis Module
   Select 'Start Extraction'
+  ```
+  The output will be:
+  ```
+  An Excel file with the entire summary of the output.
+  The seperated data saved in the data browser
   ```
   Note: make sure to install python for MATLAB when running the Pattern Analysis.
 
